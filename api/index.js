@@ -1,4 +1,7 @@
-const { kv } = require('@vercel/kv');
+const { Redis } = require('@upstash/redis');
+
+// 从环境变量自动读取 Upstash Redis 连接信息（Vercel 集成会自动注入）
+const redis = Redis.fromEnv();
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'cdd345cdd';
 
@@ -181,7 +184,6 @@ module.exports = async (req, res) => {
   // 管理页面（GET 且未登录 → 登录页；POST 登录 → 验证）
   if (path === '/admin' || path === '/api/admin') {
     if (req.method === 'POST') {
-      // 登录提交
       const chunks = [];
       req.on('data', chunk => chunks.push(chunk));
       req.on('end', () => {
@@ -211,13 +213,13 @@ module.exports = async (req, res) => {
   // API：抽取激活码
   if (path === '/api/draw' && req.method === 'POST') {
     try {
-      const codes = await kv.smembers('unused_codes');
+      const codes = await redis.smembers('unused_codes');
       if (codes.length === 0) {
         return res.json({ success: false, msg: '激活码已被领完' });
       }
       const code = codes[Math.floor(Math.random() * codes.length)];
-      await kv.srem('unused_codes', code);
-      await kv.sadd('used_codes', code);
+      await redis.srem('unused_codes', code);
+      await redis.sadd('used_codes', code);
       return res.json({ success: true, code });
     } catch(e) {
       return res.status(500).json({ success: false, msg: '服务器错误' });
@@ -231,7 +233,7 @@ module.exports = async (req, res) => {
     const code = url.searchParams.get('code');
     if (!code || code.trim() === '') return res.status(400).send('需要 ?code=XXXX');
     try {
-      await kv.sadd('unused_codes', code.toUpperCase().trim());
+      await redis.sadd('unused_codes', code.toUpperCase().trim());
       return res.send(`已添加：${code.toUpperCase().trim()}`);
     } catch(e) {
       return res.status(500).send('添加失败');
@@ -243,7 +245,7 @@ module.exports = async (req, res) => {
     const pwd = url.searchParams.get('pwd') || '';
     if (pwd !== ADMIN_PASSWORD) return res.status(401).send('Unauthorized');
     try {
-      const codes = await kv.smembers('unused_codes');
+      const codes = await redis.smembers('unused_codes');
       return res.json({ count: codes.length, codes });
     } catch(e) {
       return res.status(500).json({ count: 0, codes: [] });
@@ -255,8 +257,8 @@ module.exports = async (req, res) => {
     const pwd = url.searchParams.get('pwd') || '';
     if (pwd !== ADMIN_PASSWORD) return res.status(401).send('Unauthorized');
     try {
-      await kv.del('unused_codes');
-      await kv.del('used_codes');
+      await redis.del('unused_codes');
+      await redis.del('used_codes');
       return res.send('已清空所有激活码');
     } catch(e) {
       return res.status(500).send('清空失败');
