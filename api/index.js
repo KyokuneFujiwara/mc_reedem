@@ -192,7 +192,7 @@ module.exports = async (req, res) => {
         const pwd = params.get('password') || '';
         if (pwd === ADMIN_PASSWORD) {
           res.setHeader('Set-Cookie', 'auth=1; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=86400');
-          res.writeHead(302, { Location: '/admin' });
+          res.writeHead(302, { Location: '/api/admin' });
           res.end();
         } else {
           res.status(401).send(getLoginPage('密码错误，请重试'));
