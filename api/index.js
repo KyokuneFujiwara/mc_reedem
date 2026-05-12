@@ -182,7 +182,7 @@ module.exports = async (req, res) => {
   }
 
   // 管理页面（GET 且未登录 → 登录页；POST 登录 → 验证）
-  if (path === 'admin' || path === '/api/admin') {
+  if (path === '/admin' || path === '/api/admin') {
     if (req.method === 'POST') {
       const chunks = [];
       req.on('data', chunk => chunks.push(chunk));
