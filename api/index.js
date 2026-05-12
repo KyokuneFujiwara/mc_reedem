@@ -1,11 +1,9 @@
 const { Redis } = require('@upstash/redis');
 
-// 从环境变量自动读取 Upstash Redis 连接信息（Vercel 集成会自动注入）
 const redis = Redis.fromEnv();
-
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'cdd345cdd';
 
-// 用户抽码页面 HTML
+// 用户抽码页面 HTML（不变）
 const htmlPage = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -41,6 +39,7 @@ async function drawCode() {
   btn.textContent = '抽取中...';
   msg.textContent = '';
   try {
+    // 使用 /api/draw 路径，因为函数在 /api 下
     let resp = await fetch('/api/draw', { method: 'POST' });
     let data = await resp.json();
     if (data.success) {
@@ -61,7 +60,7 @@ async function drawCode() {
 </body>
 </html>`;
 
-// 管理页面 HTML
+// 管理页面 HTML（内部 JS 的请求路径也改为 /api/...）
 const adminPage = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -176,13 +175,13 @@ module.exports = async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const path = url.pathname;
 
-  // 首页 → 抽码页面
-  if (path === '/' || path === '/index.html') {
+  // 抽码页面（支持 /api 和 /api/index.html）
+  if (path === '/api' || path === '/api/index.html') {
     return res.status(200).setHeader('Content-Type', 'text/html').send(htmlPage);
   }
 
-  // 管理页面（GET 且未登录 → 登录页；POST 登录 → 验证）
-  if (path === '/admin' || path === '/api/admin') {
+  // 管理页面（登录处理）
+  if (path === '/api/admin') {
     if (req.method === 'POST') {
       const chunks = [];
       req.on('data', chunk => chunks.push(chunk));
@@ -191,7 +190,7 @@ module.exports = async (req, res) => {
         const params = new URLSearchParams(body);
         const pwd = params.get('password') || '';
         if (pwd === ADMIN_PASSWORD) {
-          res.setHeader('Set-Cookie', 'auth=1; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=86400');
+          res.setHeader('Set-Cookie', 'auth=1; Path=/api/admin; HttpOnly; SameSite=Strict; Max-Age=86400');
           res.writeHead(302, { Location: '/api/admin' });
           res.end();
         } else {
@@ -265,6 +264,6 @@ module.exports = async (req, res) => {
     }
   }
 
-  // 其他
+  // 其它路径 404
   return res.status(404).send('Not Found');
 };
