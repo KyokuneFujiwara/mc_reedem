@@ -1,14 +1,7 @@
-const { Redis } = require('@upstash/redis');
+// EdgeOne 边缘函数入口
+const ADMIN_PASSWORD = 'cdd345cdd'; // 可自行修改
 
-// 手动创建 Redis 实例，避免 fromEnv 读取变量失败
-const redis = new Redis({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
-
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'cdd345cdd';
-
-// ---------- 前端页面（不变，但内部 fetch 路径已修正为 /api/...）----------
+// 用户抽码页面 HTML
 const htmlPage = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -44,7 +37,7 @@ async function drawCode() {
   btn.textContent = '抽取中...';
   msg.textContent = '';
   try {
-    let resp = await fetch('/api/draw', { method: 'POST' });
+    let resp = await fetch('/draw', { method: 'POST' });
     let data = await resp.json();
     if (data.success) {
       codeBox.textContent = data.code;
@@ -64,6 +57,7 @@ async function drawCode() {
 </body>
 </html>`;
 
+// 管理页面 HTML
 const adminPage = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -103,7 +97,7 @@ const PWD = '${ADMIN_PASSWORD}';
 async function addCode() {
   let code = document.getElementById('singleCode').value.trim();
   if(!code) return alert('请输入激活码');
-  let resp = await fetch('/api/add?pwd='+PWD+'&code='+encodeURIComponent(code));
+  let resp = await fetch('/add?pwd='+PWD+'&code='+encodeURIComponent(code));
   if(resp.ok) {
     alert(await resp.text());
     document.getElementById('singleCode').value = '';
@@ -118,7 +112,7 @@ async function batchAdd() {
   let codes = raw.split(/[\\n,]+/).map(c => c.trim()).filter(c => c.length > 0);
   if(codes.length === 0) return alert('请粘贴激活码');
   for(let code of codes) {
-    await fetch('/api/add?pwd='+PWD+'&code='+encodeURIComponent(code));
+    await fetch('/add?pwd='+PWD+'&code='+encodeURIComponent(code));
   }
   alert('批量添加完成');
   document.getElementById('batchCodes').value = '';
@@ -126,7 +120,7 @@ async function batchAdd() {
 }
 
 async function listCodes() {
-  let resp = await fetch('/api/list?pwd='+PWD);
+  let resp = await fetch('/list?pwd='+PWD);
   let data = await resp.json();
   document.getElementById('count').textContent = '剩余 ' + data.count + ' 个';
   let listDiv = document.getElementById('list');
@@ -135,7 +129,7 @@ async function listCodes() {
 
 async function clearAll() {
   if(!confirm('确定要清空所有激活码？')) return;
-  await fetch('/api/clear?pwd='+PWD);
+  await fetch('/clear?pwd='+PWD);
   alert('已清空');
   listCodes();
 }
@@ -145,6 +139,7 @@ listCodes();
 </body>
 </html>`;
 
+// 登录页面
 function getLoginPage(errorMsg = '') {
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -164,7 +159,7 @@ function getLoginPage(errorMsg = '') {
 <div class="login-box">
   <h2>🔐 管理员登录</h2>
   ${errorMsg ? '<p class="error">'+errorMsg+'</p>' : ''}
-  <form method="POST" action="/api/admin">
+  <form method="POST" action="/admin">
     <input type="password" name="password" placeholder="请输入管理密码" autofocus required>
     <button type="submit">登 录</button>
   </form>
@@ -173,98 +168,121 @@ function getLoginPage(errorMsg = '') {
 </html>`;
 }
 
-// ---------- 路由处理 ----------
-module.exports = async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const path = url.pathname;
+// 主处理函数
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname;
 
-  // 首页
-  if (path === '/api' || path === '/api/index.html') {
-    return res.status(200).setHeader('Content-Type', 'text/html').send(htmlPage);
-  }
-
-  // 管理页面
-  if (path === '/api/admin') {
-    if (req.method === 'POST') {
-      const chunks = [];
-      req.on('data', chunk => chunks.push(chunk));
-      req.on('end', () => {
-        const body = Buffer.concat(chunks).toString();
-        const params = new URLSearchParams(body);
-        const pwd = params.get('password') || '';
-        if (pwd === ADMIN_PASSWORD) {
-          res.setHeader('Set-Cookie', 'auth=1; Path=/api/admin; HttpOnly; SameSite=Strict; Max-Age=86400');
-          res.writeHead(302, { Location: '/api/admin' });
-          res.end();
-        } else {
-          res.status(401).send(getLoginPage('密码错误，请重试'));
-        }
+    // 首页
+    if (path === '/' || path === '/index.html') {
+      return new Response(htmlPage, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' }
       });
-      return;
     }
-    const cookies = req.headers.cookie || '';
-    if (cookies.includes('auth=1')) {
-      return res.status(200).send(adminPage);
-    } else {
-      return res.status(200).send(getLoginPage());
-    }
-  }
 
-  // 抽码 API
-  if (path === '/api/draw' && req.method === 'POST') {
-    try {
-      const codes = await redis.smembers('unused_codes');
-      if (!codes || codes.length === 0) {
-        return res.status(200).json({ success: false, msg: '激活码已被领完' });
+    // 管理页面（登录）
+    if (path === '/admin') {
+      if (request.method === 'POST') {
+        const formData = await request.formData();
+        const pwd = formData.get('password') || '';
+        if (pwd === ADMIN_PASSWORD) {
+          return new Response(null, {
+            status: 302,
+            headers: {
+              'Location': '/admin',
+              'Set-Cookie': 'auth=1; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=86400'
+            }
+          });
+        } else {
+          return new Response(getLoginPage('密码错误，请重试'), {
+            status: 401,
+            headers: { 'Content-Type': 'text/html; charset=utf-8' }
+          });
+        }
       }
-      const code = codes[Math.floor(Math.random() * codes.length)];
-      await redis.srem('unused_codes', code);
-      await redis.sadd('used_codes', code);
-      return res.status(200).json({ success: true, code });
-    } catch (e) {
-      console.error('Redis draw error:', e);
-      return res.status(500).json({ success: false, msg: '服务器内部错误' });
-    }
-  }
 
-  // 添加激活码
-  if (path === '/api/add') {
-    const pwd = url.searchParams.get('pwd') || '';
-    if (pwd !== ADMIN_PASSWORD) return res.status(401).send('Unauthorized');
-    const code = url.searchParams.get('code');
-    if (!code || code.trim() === '') return res.status(400).send('需要 ?code=XXXX');
-    try {
-      await redis.sadd('unused_codes', code.toUpperCase().trim());
-      return res.status(200).send(`已添加：${code.toUpperCase().trim()}`);
-    } catch (e) {
-      return res.status(500).send('添加失败');
+      // GET 请求，检查 Cookie
+      const cookie = request.headers.get('Cookie') || '';
+      if (cookie.includes('auth=1')) {
+        return new Response(adminPage, {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      } else {
+        return new Response(getLoginPage(), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' }
+        });
+      }
     }
-  }
 
-  // 查看库存
-  if (path === '/api/list') {
-    const pwd = url.searchParams.get('pwd') || '';
-    if (pwd !== ADMIN_PASSWORD) return res.status(401).send('Unauthorized');
-    try {
-      const codes = await redis.smembers('unused_codes');
-      return res.status(200).json({ count: codes.length, codes });
-    } catch (e) {
-      return res.status(500).json({ count: 0, codes: [] });
+    // API：抽取激活码
+    if (path === '/draw' && request.method === 'POST') {
+      try {
+        // 从 KV 中读取未使用码列表
+        const unusedStr = await env.REDEEM_KV.get('unused_codes');
+        const codes = unusedStr ? JSON.parse(unusedStr) : [];
+        if (codes.length === 0) {
+          return new Response(JSON.stringify({ success: false, msg: '激活码已被领完' }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+        const randomIdx = Math.floor(Math.random() * codes.length);
+        const code = codes[randomIdx];
+        codes.splice(randomIdx, 1); // 移除
+        // 存回
+        await env.REDEEM_KV.put('unused_codes', JSON.stringify(codes));
+        // 记录已使用（可选）
+        const usedStr = await env.REDEEM_KV.get('used_codes');
+        const used = usedStr ? JSON.parse(usedStr) : [];
+        used.push(code);
+        await env.REDEEM_KV.put('used_codes', JSON.stringify(used));
+        return new Response(JSON.stringify({ success: true, code }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, msg: '服务器错误' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
     }
-  }
 
-  // 清空
-  if (path === '/api/clear') {
-    const pwd = url.searchParams.get('pwd') || '';
-    if (pwd !== ADMIN_PASSWORD) return res.status(401).send('Unauthorized');
-    try {
-      await redis.del('unused_codes');
-      await redis.del('used_codes');
-      return res.status(200).send('已清空所有激活码');
-    } catch (e) {
-      return res.status(500).send('清空失败');
+    // API：添加激活码
+    if (path === '/add') {
+      const pwd = url.searchParams.get('pwd') || '';
+      if (pwd !== ADMIN_PASSWORD) return new Response('Unauthorized', { status: 401 });
+      const code = url.searchParams.get('code');
+      if (!code || code.trim() === '') return new Response('需要 ?code=XXXX', { status: 400 });
+      const cleanCode = code.toUpperCase().trim();
+      const unusedStr = await env.REDEEM_KV.get('unused_codes');
+      const codes = unusedStr ? JSON.parse(unusedStr) : [];
+      if (!codes.includes(cleanCode)) {
+        codes.push(cleanCode);
+        await env.REDEEM_KV.put('unused_codes', JSON.stringify(codes));
+      }
+      return new Response(`已添加：${cleanCode}`, { status: 200 });
     }
-  }
 
-  return res.status(404).send('Not Found');
+    // API：查看库存
+    if (path === '/list') {
+      const pwd = url.searchParams.get('pwd') || '';
+      if (pwd !== ADMIN_PASSWORD) return new Response('Unauthorized', { status: 401 });
+      const unusedStr = await env.REDEEM_KV.get('unused_codes');
+      const codes = unusedStr ? JSON.parse(unusedStr) : [];
+      return new Response(JSON.stringify({ count: codes.length, codes }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // API：清空
+    if (path === '/clear') {
+      const pwd = url.searchParams.get('pwd') || '';
+      if (pwd !== ADMIN_PASSWORD) return new Response('Unauthorized', { status: 401 });
+      await env.REDEEM_KV.put('unused_codes', '[]');
+      await env.REDEEM_KV.put('used_codes', '[]');
+      return new Response('已清空所有激活码', { status: 200 });
+    }
+
+    return new Response('Not Found', { status: 404 });
+  }
 };
